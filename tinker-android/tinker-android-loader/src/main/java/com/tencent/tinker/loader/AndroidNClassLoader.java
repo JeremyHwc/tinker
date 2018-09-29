@@ -40,6 +40,7 @@ class AndroidNClassLoader extends PathClassLoader {
     private static final String TAG = "Tinker.NClassLoader";
 
     private static Object oldDexPathListHolder = null;
+    private static String baseApkFullPath = null;
 
     private final PathClassLoader originClassLoader;
     private String applicationClassName;
@@ -51,6 +52,7 @@ class AndroidNClassLoader extends PathClassLoader {
         if (name != null && !name.equals("android.app.Application")) {
             applicationClassName = name;
         }
+        baseApkFullPath = application.getPackageCodePath();
     }
 
     @SuppressWarnings("unchecked")
@@ -70,7 +72,10 @@ class AndroidNClassLoader extends PathClassLoader {
         boolean isFirstItem = true;
         for (Object dexElement : dexElements) {
             final DexFile dexFile = (DexFile) dexFileField.get(dexElement);
-            if (dexFile == null) {
+            if (dexFile == null || dexFile.getName() == null) {
+                continue;
+            }
+            if (!dexFile.getName().equals(baseApkFullPath)) {
                 continue;
             }
             if (isFirstItem) {
@@ -153,25 +158,23 @@ class AndroidNClassLoader extends PathClassLoader {
         return classLoader;
     }
 
-//    public static String getLdLibraryPath(ClassLoader loader) throws Exception {
-//        String nativeLibraryPath;
-//
-//        nativeLibraryPath = (String) loader.getClass()
-//            .getMethod("getLdLibraryPath", new Class[0])
-//            .invoke(loader, new Object[0]);
-//
-//        return nativeLibraryPath;
-//    }
-
     public Class<?> findClass(String name) throws ClassNotFoundException {
-        // loader class use default pathClassloader to load
-        if ((name != null
-                && name.startsWith("com.tencent.tinker.loader.")
-                && !name.equals(SystemClassLoaderAdder.CHECK_DEX_CLASS))
-                || (applicationClassName != null && applicationClassName.equals(name))) {
+        // app class use default pathClassloader to load
+        if (applicationClassName != null && applicationClassName.equals(name)) {
+            return originClassLoader.loadClass(name);
+        } else if (name != null && name.startsWith("com.tencent.tinker.loader.")
+                && !name.equals(SystemClassLoaderAdder.CHECK_DEX_CLASS)) {
             return originClassLoader.loadClass(name);
         }
-        return super.findClass(name);
+        try {
+            return super.findClass(name);
+        } catch (ClassNotFoundException e) {
+            // Some jars/apks other than base.apk was removed from AndroidNClassloader's dex path list.
+            // So if target class cannot be found in AndroidNClassloader, we should fallback to try
+            // original PathClassLoader for compatibility.
+            // Obviously this behavior violates the Parent Delegate Model, but it doesn't matter.
+            return originClassLoader.loadClass(name);
+        }
     }
 
     @Override
